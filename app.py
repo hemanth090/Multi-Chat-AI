@@ -55,48 +55,49 @@ MODEL_CONFIG = {
     "context_window": 8192  # Safe default for most models
 }
 
+# Process chat messages with enhanced control over accuracy and length.
 def process_chat(message, selected_model, temperature, max_tokens):
-    """Process chat messages with enhanced control over accuracy and length."""
     try:
-        with st.spinner(""):
-            # Create completion with the prepared messages
-            stream = client.chat.completions.create(
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": message})
+        
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(message)
+        
+        # Display assistant response with loading indicator
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            
+            # Get response from API
+            response = client.chat.completions.create(
                 model=selected_model,
-                messages=[
-                    {"role": "developer", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": message}
-                ],
+                messages=[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages],
                 temperature=temperature,
                 max_tokens=max_tokens,
-                top_p=MODEL_CONFIG["top_p"],
-                presence_penalty=MODEL_CONFIG["presence_penalty"],
-                frequency_penalty=MODEL_CONFIG["frequency_penalty"],
                 stream=True
             )
             
-            response_placeholder = st.empty()
-            collected_messages = []
-            
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    chunk_message = chunk.choices[0].delta.content
-                    collected_messages.append(chunk_message)
-                    response = "".join(collected_messages)
-                    response_placeholder.markdown(f'<div class="chat-message">{response}</div>', unsafe_allow_html=True)
-            
-            return "".join(collected_messages)
-            
+            # Stream the response
+            for chunk in response:
+                if chunk.choices[0].delta.content is not None:
+                    full_response += chunk.choices[0].delta.content
+                message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
+        
+        # Add assistant response to chat history
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        
     except Exception as e:
-        error_msg = str(e)
-        if "500" in error_msg:
-            st.error("⚠️ Model unavailable. Please try another model.")
-        elif "404" in error_msg:
-            st.error(f"⚠️ Model '{selected_model}' not found.")
-        elif "401" in error_msg:
-            st.error("⚠️ Authentication failed.")
-        else:
-            st.error(f"⚠️ {error_msg}")
-        return None
+        # Display error message in red
+        st.error(f"Error: {str(e)}")
+        # Log the full error for debugging
+        st.error("Please try again or select a different model.")
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 # Custom CSS
 st.markdown("""
@@ -129,10 +130,10 @@ st.markdown("""
         gap: 0.5rem;
         align-items: center;
         margin-top: 1rem;
-        background-color: #2D2D2D;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border: 1px solid #3D3D3D;
+        background-color: transparent;
+        padding: 0;
+        border-radius: 0;
+        border: none;
     }
     
     /* Input field */
@@ -228,42 +229,47 @@ st.markdown("""
 st.title("💭 Chat Bot")
 
 # Model selection and settings in sidebar
-with st.sidebar:
-    st.markdown("### Model Selection")
-    provider = st.selectbox("Select Provider", options=list(MODELS.keys()))
-    st.markdown(f'<div class="provider-info">{PROVIDER_INFO[provider]}</div>', unsafe_allow_html=True)
-    model = st.selectbox("Select Model", options=MODELS[provider])
-    st.markdown(f"**Total Models:** {len(MODELS[provider])}")
-    
-    st.markdown("### Response Settings")
+st.sidebar.title("Model Settings")
+
+# Provider selection
+provider = st.sidebar.selectbox(
+    "Select Provider",
+    options=list(PROVIDER_INFO.keys()),
+    format_func=lambda x: f"{x} - {PROVIDER_INFO[x]}"
+)
+
+# Model selection based on selected provider
+if provider:
+    model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS.get(provider, []),
+        key="model_select"
+    )
+
+    st.sidebar.markdown(f"**Total Models:** {len(MODELS.get(provider, []))}")
+
+    # Response settings
+    st.sidebar.markdown("### Response Settings")
     
     # Accuracy control (temperature)
-    accuracy_mode = st.select_slider(
-        "Response Style",
-        options=["Precise", "Balanced", "Creative"],
-        value="Balanced",
-        help="Adjust how creative or precise the responses should be"
+    temperature = st.sidebar.slider(
+        "Temperature (Creativity)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.7,
+        step=0.1,
+        help="Higher values make the output more creative but less focused"
     )
-    temperature = MODEL_CONFIG["temperature"][accuracy_mode]
     
-    # Max tokens control
-    response_length = st.select_slider(
-        "Response Length",
-        options=["Short", "Medium", "Long", "Extra Long"],
-        value="Medium",
-        help="Control the maximum length of responses"
+    # Length control
+    max_tokens = st.sidebar.slider(
+        "Maximum Length",
+        min_value=50,
+        max_value=4000,
+        value=2000,
+        step=50,
+        help="Maximum number of tokens in the response"
     )
-    max_tokens = MODEL_CONFIG["max_tokens"][response_length]
-    
-    # Display current settings
-    st.markdown("### Current Settings")
-    st.markdown(f"""
-    - Temperature: {temperature:.1f}
-    - Max Tokens: {max_tokens:,}
-    - Top P: {MODEL_CONFIG["top_p"]}
-    - Presence Penalty: {MODEL_CONFIG["presence_penalty"]}
-    - Frequency Penalty: {MODEL_CONFIG["frequency_penalty"]}
-    """)
 
 # Chat interface
 st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
